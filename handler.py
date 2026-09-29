@@ -447,6 +447,19 @@ COLD_START_MAX_WAIT_SECONDS = 15 * 60
 # past this, waiting longer doesn't meaningfully improve the odds of
 # recovery, it just quietly burns GPU time on a worker that's likely
 # broken — see terminate_worker_soon, called once this is exhausted.
+# Was 90s, then 180s, then 300s — raised again because this constant
+# conflates two different things. needs_download above only checks
+# whether the koboldcpp CUDA engine binary was extracted, not whether
+# the SD checkpoint --config points at (the actual multi-GB model file)
+# is present — that download happens inside koboldcpp.py itself, via
+# its own --config kcppt fetch, invisible to this file. On this
+# endpoint specifically, the engine marker is essentially always
+# already there (shared volume), but the checkpoint can still be a
+# fresh, large, from-scratch download — 300s isn't enough headroom for
+# that on top of the network-volume-read slowness already noted below,
+# so this is set generously rather than trying to actually distinguish
+# the two cases from here.
+#
 # Was 90s, then 180s — raised again after real logs showed the
 # "already on disk" case is NOT reliably fast: reading
 # qwen2_merges_utf8_c_str.embd off the network volume took over 2
@@ -456,7 +469,7 @@ COLD_START_MAX_WAIT_SECONDS = 15 * 60
 # 180s and crashing the whole worker before it ever got a chance to
 # finish. "Files are on disk" turns out not to mean "loads quickly" —
 # it can still mean a slow network read away from actually being ready.
-WARM_RESTART_MAX_WAIT_SECONDS = 300
+WARM_RESTART_MAX_WAIT_SECONDS = 20 * 60
 POLL_STEP_SECONDS = 5
 
 
