@@ -15,22 +15,23 @@ previously only triggered automatically on client disconnect — so a
 generation can be cancelled on demand instead. Search this file for
 `abort_image` to see the exact block.
 
-Nothing else was changed. No C++/CUDA code was touched or recompiled — the
-compiled backend (`koboldcpp_cublas.so`, extracted by the worker itself from
-koboldcpp's official release binary, see `handler.py`'s
-`ensure_koboldcpp_engine()`) is untouched, official, and not part of this
-patch at all.
+Nothing in `koboldcpp_cublas.so` itself was patched — this route is pure
+Python. The compiled CUDA backend is built from source by the worker on
+first cold start (see `handler.py`'s `ensure_koboldcpp_engine()` and
+`build_convrot_cuda_engine.sh`), from the exact upstream commit pinned in
+that script, not from this directory's files at all.
 
 ## Why this needs manual updates
 
-The official koboldcpp release is one sealed program file, so there was no
-way to slip our patch into it. Instead the worker runs koboldcpp's own
-Python script directly (`python3 koboldcpp.py`) next to that same official
-compiled engine. That means the Python layer here is a frozen snapshot —
-new features/fixes koboldcpp ships in `koboldcpp.py` itself won't reach this
-worker until this snapshot is refreshed by hand. The compiled engine
-(`koboldcpp_cublas.so`) is unaffected by any of this and is always whatever
-the worker last extracted from koboldcpp's current official download.
+There was no way to slip this one-route patch into a from-source build
+without it living somewhere — so the worker runs this patched
+`koboldcpp.py` directly (`python3 koboldcpp.py`) next to the separately
+built `koboldcpp_cublas.so`. That means the Python layer here is a frozen
+snapshot — new features/fixes koboldcpp ships in `koboldcpp.py` itself
+won't reach this worker until this snapshot is refreshed by hand. The
+compiled engine (`koboldcpp_cublas.so`) is unaffected by any of this; it
+tracks whatever commit `build_convrot_cuda_engine.sh` is pinned to,
+independent of this file.
 
 ## How to update (should take a few minutes)
 

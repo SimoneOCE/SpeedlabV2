@@ -20,23 +20,31 @@ KCPPT_CONFIG_URL = os.environ.get(
     "https://huggingface.co/koboldcpp/kcppt/resolve/main/DasiwaMinimaxH3.kcppt?download=true",
 )
 # Where our fork of koboldcpp actually runs from. Not the official frozen
-# single-file binary anymore — see ensure_koboldcpp_engine()'s docstring —
-# but a plain koboldcpp.py (patched, vendored in koboldcpp_engine/ below)
-# plus the same official compiled koboldcpp_cublas.so backend, extracted
-# once from that same frozen binary and cached here alongside it.
+# single-file binary — a plain koboldcpp.py (patched, vendored in
+# koboldcpp_engine/ below) plus a koboldcpp_cublas.so CUDA backend built
+# from source on this worker (see ensure_koboldcpp_engine()'s docstring and
+# build_convrot_cuda_engine.sh) and cached here alongside it.
 KOBOLD_DIR = os.path.join(VOLUME_DIR, "koboldcpp_engine")
 KOBOLD_PY = os.path.join(KOBOLD_DIR, "koboldcpp.py")
-# Written only once every .so from the extraction (koboldcpp_cublas.so AND
-# the CUDA runtime libraries it itself depends on to even load, e.g.
-# libcublas.so.12) has actually been copied to KOBOLD_DIR. Checking for
-# this instead of just koboldcpp_cublas.so's own existence is what lets a
-# volume that already has a half-done extraction (koboldcpp_cublas.so
-# present, its dependencies missing — exactly the state a real one hit,
-# see libcublas.so.12: cannot open shared object file) self-heal on its
-# next worker start, instead of the "already there" check skipping past
-# the fix forever because the one file it used to check for is already
-# there.
-ENGINE_READY_MARKER = os.path.join(KOBOLD_DIR, ".engine_extraction_complete")
+# Written only once koboldcpp_cublas.so (built from source, see
+# build_convrot_cuda_engine.sh) AND the CUDA runtime libraries it depends on
+# to even load (e.g. libcublas.so.12) have actually landed in KOBOLD_DIR.
+# Checking for this instead of just koboldcpp_cublas.so's own existence is
+# what lets a volume that already has a half-done build self-heal on its
+# next worker start, instead of the "already there" check skipping past a
+# broken state forever because the one file it used to check for is
+# already there.
+#
+# Deliberately a different filename than the old
+# ".engine_extraction_complete" marker (from when this extracted the
+# official prebuilt binary instead of building from source) — an old
+# volume that still has that stale marker must NOT be mistaken for having
+# a real build already, so it rebuilds instead of silently keeping the
+# CUDA-12.1-linked binary that doesn't actually support this GPU's INT8
+# tensor cores. No volume cleanup needed for this to take effect: the new
+# build overwrites every same-named file the old extraction left behind
+# (koboldcpp_cublas.so, libcublas.so.12, etc. all keep the same names).
+ENGINE_READY_MARKER = os.path.join(KOBOLD_DIR, ".convrot_cuda_build_complete")
 # The files this worker itself ships with (COPYd into the image by the
 # Dockerfile) — the source we copy from into KOBOLD_DIR on the volume.
 ENGINE_SRC_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "koboldcpp_engine")
@@ -307,19 +315,22 @@ def ensure_koboldcpp_engine():
     the plain, patched script ourselves is the only way to expose that
     route without recompiling anything.
 
-    The CUDA backend (koboldcpp_cublas.so) is NOT rebuilt — that would mean
-    a full C++/CUDA toolchain, hours of build time, and real risk of
-    getting a subtly different binary than the one this whole pipeline has
-    been validated against. Instead it's extracted, byte-for-byte, from
-    the official frozen binary: PyInstaller "--onefile" binaries are just
-    a self-extracting archive of the exact same files a normal (non-onefile)
-    install would have on disk, koboldcpp_cublas.so among them — verified
-    locally before writing this by building a throwaway PyInstaller onefile
-    binary using the identical `--add-data './koboldcpp_cublas.so:.'`
-    pattern koboldcpp's own release build script (koboldcpp.sh) uses, then
-    extracting it with pyinstxtractor.py and confirming the extracted file
-    is byte-identical (sha256) to the original. Same mechanism, real file,
-    just parsed off disk instead of by actually running the binary.
+    The CUDA backend (koboldcpp_cublas.so) IS rebuilt from source here, on
+    this worker, every time the volume doesn't already have one cached —
+    see build_convrot_cuda_engine.sh for the full "why". Short version: the
+    official prebuilt koboldcpp_cublas.so is compiled against CUDA 12.1.0,
+    whose cuBLAS predates Blackwell (sm_120, e.g. RTX 5090) hardware
+    entirely. ConvRot's INT8 tensorwise matmul passes ggml's compile-time
+    "is this backend supported" check on a Blackwell GPU (that check just
+    verifies compiled-arch >= Turing, which technically includes Blackwell)
+    but then fails at the actual cublasGemmEx() call with "the requested
+    functionality is not supported" — cuBLAS 12.1 simply never shipped an
+    INT8 tensor-core (IMMA) kernel for an architecture that didn't exist
+    yet. Rebuilding against CUDA 12.8.0 (the toolkit Blackwell actually
+    launched alongside) on a worker with the real GPU physically attached —
+    so the Makefile's own `-arch=native` NVCC flag resolves correctly — is
+    the fix. This only ever needs to happen once per volume; the resulting
+    .so is cached here exactly like the old extracted one was.
     """
     os.makedirs(KOBOLD_DIR, exist_ok=True)
 
@@ -355,68 +366,27 @@ def ensure_koboldcpp_engine():
         print("koboldcpp CUDA backend already present on volume.")
         return
 
-    print("Downloading official koboldcpp binary to extract its CUDA backend from...")
-    frozen_path = os.path.join(VOLUME_DIR, "_koboldcpp_frozen_tmp")
-    r = requests.get(
-        "https://koboldai.org/cpplinuxcu12",
-        stream=True, timeout=300
-    )
-    r.raise_for_status()
-    with open(frozen_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
-    os.chmod(frozen_path, 0o755)
-    print("Downloaded. Extracting koboldcpp_cublas.so with pyinstxtractor...")
-
-    extractor = os.path.join(ENGINE_SRC_DIR, "pyinstxtractor.py")
+    build_root = os.path.join(VOLUME_DIR, "_convrot_cuda_build")
+    build_script = os.path.join(ENGINE_SRC_DIR, "build_convrot_cuda_engine.sh")
+    print("No cached CUDA backend on this volume yet - building koboldcpp_cublas.so from source "
+          "(CUDA 12.8.0, so ConvRot's INT8 tensor-core matmul actually has a Blackwell kernel to "
+          "call). This is a real C++/CUDA compile and can take a while on first run; it's only "
+          "done once per volume. See build_convrot_cuda_engine.sh for details.")
     result = subprocess.run(
-        ["python3", extractor, frozen_path],
-        cwd=VOLUME_DIR, capture_output=True, text=True, timeout=180,
+        ["bash", build_script, build_root, KOBOLD_DIR],
+        cwd=VOLUME_DIR, timeout=3600,
     )
-    print(result.stdout[-2000:])
     if result.returncode != 0:
-        raise RuntimeError(f"pyinstxtractor failed: {result.stderr[-2000:]}")
+        raise RuntimeError(f"build_convrot_cuda_engine.sh failed with exit code {result.returncode}")
 
-    extracted_dir = os.path.join(VOLUME_DIR, os.path.basename(frozen_path) + "_extracted")
-    extracted_so = os.path.join(extracted_dir, "koboldcpp_cublas.so")
-    if not os.path.exists(extracted_so):
-        raise RuntimeError(
-            f"koboldcpp_cublas.so not found after extraction (looked in {extracted_dir})"
-        )
-
-    # koboldcpp_cublas.so alone isn't enough to load — it needs the CUDA
-    # runtime libraries it was bundled with (e.g. libcublas.so.12), which
-    # sit right alongside it in the same extraction. Copy every .so file
-    # found there, not just the one we went looking for — this is what
-    # was missing before (extraction only ever kept koboldcpp_cublas.so
-    # itself, discarding everything else pyinstxtractor pulled out,
-    # which is why loading it crashed with "libcublas.so.12: cannot open
-    # shared object file: No such file or directory" on a real worker).
-    copied = []
-    for fname in os.listdir(extracted_dir):
-        full_path = os.path.join(extracted_dir, fname)
-        if ".so" in fname and os.path.isfile(full_path):
-            shutil.copy(full_path, os.path.join(KOBOLD_DIR, fname))
-            os.chmod(os.path.join(KOBOLD_DIR, fname), 0o755)
-            copied.append(fname)
-    print(f"Copied {len(copied)} shared library file(s) to volume: {copied}")
+    built_so = os.path.join(KOBOLD_DIR, "koboldcpp_cublas.so")
+    if not os.path.exists(built_so):
+        raise RuntimeError(f"Build script exited 0 but koboldcpp_cublas.so is missing from {KOBOLD_DIR}")
+    os.chmod(built_so, 0o755)
 
     with open(ENGINE_READY_MARKER, "w") as f:
         f.write("ok")
-    print("koboldcpp CUDA backend extracted and cached on volume.")
-
-    # Only the shared libraries (~hundreds of MB total) are worth keeping —
-    # not the multi-GB frozen binary they came from, and not the
-    # extraction scratch dir (756 files, mostly Python bytecode we never
-    # need since we run our own koboldcpp.py directly).
-    for path in (frozen_path, extracted_dir):
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            elif os.path.exists(path):
-                os.remove(path)
-        except Exception as e:
-            print(f"Cleanup of {path} failed (non-fatal): {e}")
+    print("koboldcpp CUDA backend built from source and cached on volume.")
 
 def ensure_loras():
     os.makedirs(LORA_DIR, exist_ok=True)
