@@ -121,7 +121,7 @@
     1.0
   ],
   "sdmaingpu": -1,
-  "sdmodel": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors",
+  "sdmodel": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
   "sdoffloadcpu": true,
   "sdphotomaker": "",
   "sdquant": 0,
