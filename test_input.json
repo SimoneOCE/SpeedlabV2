@@ -1,0 +1,8 @@
+{
+  "input": {
+    "prompt": "a cat surfing a wave",
+    "width": 512,
+    "height": 512,
+    "steps": 20
+  }
+}

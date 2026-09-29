@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+
+# Never committed today (verified via a full grep of every commit in
+# history), but nothing previously stopped one from landing by mistake.
+.env
+.env.*
+*.pem
+*.key
