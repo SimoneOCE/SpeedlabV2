@@ -457,8 +457,10 @@ COLD_START_MAX_WAIT_SECONDS = 15 * 60
 # already there (shared volume), but the checkpoint can still be a
 # fresh, large, from-scratch download — 300s isn't enough headroom for
 # that on top of the network-volume-read slowness already noted below,
-# so this is set generously rather than trying to actually distinguish
-# the two cases from here.
+# so this is set to match this endpoint's own 6000s execution timeout
+# rather than trying to actually distinguish the two cases from here —
+# if a job runs this long, RunPod's own timeout is the thing that ends
+# it, not this internal wait loop.
 #
 # Was 90s, then 180s — raised again after real logs showed the
 # "already on disk" case is NOT reliably fast: reading
@@ -469,7 +471,7 @@ COLD_START_MAX_WAIT_SECONDS = 15 * 60
 # 180s and crashing the whole worker before it ever got a chance to
 # finish. "Files are on disk" turns out not to mean "loads quickly" —
 # it can still mean a slow network read away from actually being ready.
-WARM_RESTART_MAX_WAIT_SECONDS = 20 * 60
+WARM_RESTART_MAX_WAIT_SECONDS = 6000
 POLL_STEP_SECONDS = 5
 
 
