@@ -30,7 +30,15 @@
 set -euo pipefail
 
 SCRATCH_REPO_URL="https://github.com/SimoneOCE/koboldcpp-convrot-scratch.git"
-SCRATCH_REPO_COMMIT="9676017cc69cb8f2c20b2fbf5718bc1163a2b632"
+# TEMPORARY: pinned to the debug-weightscale branch's tip, not the
+# validated main-line commit, while we track down the black-frame-output
+# bug via CONVROT_DEBUG_SCALES (see ggml_cuda_mul_mat_i8 in
+# ggml-cuda.cu). Revert to 9676017cc69cb8f2c20b2fbf5718bc1163a2b632 (the
+# last commit validated by the standalone CUDA-backend correctness test)
+# once this is resolved - the debug prints are gated behind an env var
+# and inert otherwise, but there's no reason to keep building from an
+# unreviewed branch once we don't need to.
+SCRATCH_REPO_COMMIT="fbbd6ddc9d10cbe79164a36c47df421b9140a3f7"
 CUDA_CHANNEL_LABEL="nvidia/label/cuda-12.8.0"
 
 BUILD_ROOT="${1:?usage: build_convrot_cuda_engine.sh <build-root-dir> <output-dir>}"

@@ -509,6 +509,10 @@ def start_kobold_if_needed():
     # buffer per-transfer instead of DMA'ing directly) - acceptable given
     # the alternative is this failing outright.
     kobold_env["GGML_CUDA_NO_PINNED"] = "1"
+    # TEMPORARY: dumps weight_scales/bias pointer+value diagnostics for the
+    # black-frame-output bug (see build_convrot_cuda_engine.sh's pinned
+    # commit comment). Remove alongside reverting that pin once resolved.
+    kobold_env["CONVROT_DEBUG_SCALES"] = "1"
     proc = subprocess.Popen([
         "python3", KOBOLD_PY,
         "--quiet",
