@@ -47,7 +47,7 @@
   "jinjathink": "default",
   "lora": null,
   "loramult": 1.0,
-  "lowvram": false,
+  "lowvram": true,
   "maingpu": -1,
   "maxrequestsize": 32,
   "mcpfile": null,
