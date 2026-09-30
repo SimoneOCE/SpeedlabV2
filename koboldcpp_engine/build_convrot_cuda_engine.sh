@@ -82,7 +82,26 @@ fi
 
 echo "[convrot-build] Building koboldcpp_cublas.so (this can take a while - full C++/CUDA rebuild)..."
 cd src
+
+# The final link step needs -lcuda (the CUDA *driver* library, distinct from
+# -lcudart/-lcublas which are runtime libs and link fine on their own).
+# There's no real libcuda.so on a build machine's linker search path - only
+# the driver's own versioned runtime .so.1, sufficient to run but not to
+# link against - so the cuda-driver-dev conda package ships a stub
+# libcuda.so specifically for this. It's not on the default search path
+# (that's the whole reason it's called a "stub" dir), so find it and hand
+# it to the linker explicitly via LIBRARY_PATH, which gcc/g++ read
+# automatically for every -l flag without needing Makefile changes.
+CUDA_STUB_DIR=$(dirname "$(find "$BUILD_ROOT/conda/envs/build" -name 'libcuda.so' -path '*stubs*' 2>/dev/null | head -1)")
+if [ -z "$CUDA_STUB_DIR" ] || [ "$CUDA_STUB_DIR" = "." ]; then
+    echo "[convrot-build] FATAL: libcuda.so stub not found anywhere under the build env - cuda-driver-dev may not have installed it where expected." >&2
+    exit 1
+fi
+echo "[convrot-build] Found libcuda.so stub at $CUDA_STUB_DIR"
+
+LIBRARY_PATH="$CUDA_STUB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}" \
 "$BUILD_ROOT/bin/micromamba" run -r "$BUILD_ROOT/conda" -p "$BUILD_ROOT/conda/envs/build" \
+    env LIBRARY_PATH="$CUDA_STUB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}" \
     make -j"$(nproc)" LLAMA_CUBLAS=1 LLAMA_ADD_CONDA_PATHS=1 koboldcpp_cublas
 
 if [ ! -f koboldcpp_cublas.so ]; then
