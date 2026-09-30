@@ -32,16 +32,21 @@ set -euo pipefail
 SCRATCH_REPO_URL="https://github.com/SimoneOCE/koboldcpp-convrot-scratch.git"
 # TEMPORARY: pinned to the debug-weightscale branch's tip, not the
 # validated main-line commit, while we track down the black-frame-output
-# bug via CONVROT_DEBUG_SCALES. Two test runs proved the op never reaches
-# ggml_cuda_mul_mat_i8 (ggml-cuda.cu) at all - with sdoffloadcpu on, it's
-# actually routed to the CPU backend's ggml_compute_forward_mul_mat_i8_f32
-# (ggml-cpu.c), which now carries the same diagnostic. Revert to
+# bug via CONVROT_DEBUG_SCALES. Three test rounds produced zero output
+# from the env-gated diagnostic in ggml_compute_forward_mul_mat_i8_f32
+# (ggml-cpu.c) despite realistic compute time - suspicious enough that
+# this commit adds unconditional entry/supports_op prints instead (see
+# ggml-cpu.c and ggml-cpu.cpp) to settle whether that function is even
+# reached, or whether ggml_backend_cpu_device_supports_op is rejecting
+# the op before it gets there (that function has no GGML_TYPE_I8 entry
+# in type_traits_cpu[], so its capability check may be silently
+# collapsing to "only plain F32 activations supported"). Revert to
 # 9676017cc69cb8f2c20b2fbf5718bc1163a2b632 (the last commit validated by
 # the standalone CUDA-backend correctness test) once this is resolved -
 # the debug prints are gated behind an env var and inert otherwise, but
 # there's no reason to keep building from an unreviewed branch once we
 # don't need to.
-SCRATCH_REPO_COMMIT="ac7baa4cf45e0cb3b2689876aacc612ec036957e"
+SCRATCH_REPO_COMMIT="95d0f82bddfab714ea6af2234a6f7b7f241af1ac"
 CUDA_CHANNEL_LABEL="nvidia/label/cuda-12.8.0"
 
 BUILD_ROOT="${1:?usage: build_convrot_cuda_engine.sh <build-root-dir> <output-dir>}"
