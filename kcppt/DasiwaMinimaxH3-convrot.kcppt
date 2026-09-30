@@ -113,7 +113,7 @@
   "sdclampedsoft": 0,
   "sdclip1": "https://huggingface.co/leejet/MiniMax-H3-GGUF/resolve/main/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
   "sdclip2": "",
-  "sdclipdevice": -2,
+  "sdclipdevice": -1,
   "sdconvdirect": "off",
   "sdflashattention": true,
   "sdlora": [],

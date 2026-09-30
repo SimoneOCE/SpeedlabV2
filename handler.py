@@ -488,6 +488,27 @@ def start_kobold_if_needed():
     kobold_env["LD_LIBRARY_PATH"] = (
         f"{KOBOLD_DIR}:{existing_ld_path}" if existing_ld_path else KOBOLD_DIR
     )
+    # sdoffloadcpu's combined CPU-params buffer (DiT+CLIP+VAE, since they all
+    # share one compute device) needs cudaHostAlloc'ing tens of GB in one
+    # pinned/page-locked allocation — ggml_cuda_host_malloc, ggml-cuda.cu.
+    # That's genuinely failed here with cudaErrorInvalidValue ("invalid
+    # argument") at ~60GiB, which is the signature of hitting a configured
+    # ceiling (most likely RLIMIT_MEMLOCK/`ulimit -l` for this container),
+    # not of actually running out of the box's real RAM. ggml already falls
+    # back to a plain (non-pinned) allocation on failure, but only *after*
+    # paying for the failed pinned attempt and logging it — and per traced
+    # worker logs, the process then survives for minutes under repeated
+    # "unhealthy container: OOM" warnings before actually dying, so the
+    # failed attempt isn't fully free even though it isn't immediately
+    # fatal either. GGML_CUDA_NO_PINNED (checked at the top of
+    # ggml_cuda_host_malloc) skips the pinned attempt outright and goes
+    # straight to the ordinary heap allocation, which isn't subject to
+    # RLIMIT_MEMLOCK at all — only to actual free RAM, which this worker
+    # has plenty of. Trade-off: non-pinned host<->GPU transfers are somewhat
+    # slower than pinned ones (the driver stages through a temporary pinned
+    # buffer per-transfer instead of DMA'ing directly) - acceptable given
+    # the alternative is this failing outright.
+    kobold_env["GGML_CUDA_NO_PINNED"] = "1"
     proc = subprocess.Popen([
         "python3", KOBOLD_PY,
         "--quiet",
