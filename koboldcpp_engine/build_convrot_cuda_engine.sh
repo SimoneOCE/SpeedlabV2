@@ -70,6 +70,7 @@ channels:
   - conda-forge
 dependencies:
   - cuda-nvcc
+  - cuda-cuobjdump
   - cuda-libraries-dev
   - cxx-compiler
   - gxx=10
@@ -119,12 +120,18 @@ fi
 
 echo "[convrot-build] Build OK. Checking which GPU architecture actually got compiled in..."
 GPU_CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
-if command -v "$BUILD_ROOT/conda/envs/build/bin/cuobjdump" >/dev/null 2>&1; then
-    "$BUILD_ROOT/conda/envs/build/bin/cuobjdump" --list-elf koboldcpp_cublas.so 2>/dev/null | grep "sm_" || true
-    if ! "$BUILD_ROOT/conda/envs/build/bin/cuobjdump" --list-elf koboldcpp_cublas.so 2>/dev/null | grep -q "sm_${GPU_CC}"; then
-        echo "[convrot-build] WARNING: could not confirm sm_${GPU_CC} in the built binary - continuing anyway, runtime will tell us." >&2
-    fi
+CUOBJDUMP="$BUILD_ROOT/conda/envs/build/bin/cuobjdump"
+if [ ! -x "$CUOBJDUMP" ]; then
+    echo "[convrot-build] FATAL: cuobjdump not found at $CUOBJDUMP - can't verify -arch=native actually embedded sm_${GPU_CC} code. This check exists precisely because that silently failed before (runtime warning: 'ggml was not compiled with any CUDA arch'), so refusing to ship an unverified build." >&2
+    exit 1
 fi
+EMBEDDED_ARCHS=$("$CUOBJDUMP" --list-elf koboldcpp_cublas.so 2>/dev/null | grep -o "sm_[0-9]*" | sort -u)
+echo "[convrot-build] Embedded SASS architectures: ${EMBEDDED_ARCHS:-<none found>}"
+if ! echo "$EMBEDDED_ARCHS" | grep -q "^sm_${GPU_CC}\$"; then
+    echo "[convrot-build] FATAL: sm_${GPU_CC} (this GPU's compute capability) is NOT among the compiled architectures ($EMBEDDED_ARCHS). -arch=native failed to target the attached GPU - refusing to ship a binary that will silently produce wrong output at runtime." >&2
+    exit 1
+fi
+echo "[convrot-build] Confirmed sm_${GPU_CC} is present in the built binary."
 
 echo "[convrot-build] Collecting output into $OUT_DIR..."
 cp koboldcpp_cublas.so "$OUT_DIR/"
