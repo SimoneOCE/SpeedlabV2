@@ -116,10 +116,19 @@ if [ -z "$CUDA_STUB_DIR" ] || [ "$CUDA_STUB_DIR" = "." ]; then
 fi
 echo "[convrot-build] Found libcuda.so stub at $CUDA_STUB_DIR"
 
+# LLAMA_CONVROT=1 is what actually flips on KCPP_MAINLINE_INT8_CONVROT
+# (see the Makefile's `ifdef LLAMA_CONVROT` block). Without it, the I8
+# ConvRot code in ggml_block.hpp/safetensors_io.cpp is preprocessed out
+# entirely and int8_convrot safetensors silently fall back to a
+# dequantize-to-F16-at-load-time path instead - which is what every
+# build this session has actually been running, despite the model being
+# an int8_convrot checkpoint. Four rounds of instrumentation in the I8
+# matmul compute functions produced zero output because that code was
+# never being compiled into the executed graph at all.
 LIBRARY_PATH="$CUDA_STUB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}" \
 "$BUILD_ROOT/bin/micromamba" run -r "$BUILD_ROOT/conda" -p "$BUILD_ROOT/conda/envs/build" \
     env LIBRARY_PATH="$CUDA_STUB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}" \
-    make -j"$(nproc)" LLAMA_CUBLAS=1 LLAMA_ADD_CONDA_PATHS=1 koboldcpp_cublas
+    make -j"$(nproc)" LLAMA_CUBLAS=1 LLAMA_ADD_CONDA_PATHS=1 LLAMA_CONVROT=1 koboldcpp_cublas
 
 if [ ! -f koboldcpp_cublas.so ]; then
     echo "[convrot-build] FATAL: build finished but koboldcpp_cublas.so was not produced." >&2
